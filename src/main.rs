@@ -3,6 +3,13 @@ use std::iter::Iterator;
 
 const MAX_PACKET_SIZE : usize = 512;
 
+// https://www.ietf.org/rfc/rfc1350.txt
+
+enum Packet {
+    RRQ(String, String),
+    Error,
+}
+
 fn main() {
     let local_addr = "127.0.0.1:6969";
 
@@ -16,25 +23,41 @@ fn main() {
     match socket.recv_from(&mut buf) {
         Ok((amt, src)) => {
             println!("Got {} bytes from {}.", amt, src);
-            decode(&buf[..amt]);
+            match decode(&buf[..amt]) {
+                Packet::RRQ(filename, mode_name) => {
+                    println!("filename: {}", filename);
+                    println!("mode_name: {}", mode_name);
+                },
+                _ => {
+                    println!("ERROR");
+                }
+            }
         },
         Err(err) => println!("Can't recv_from: {}", err)
     }
 }
 
-fn decode(p : & [u8]) {
+fn decode(p : & [u8]) -> Packet{
     let mut iter = p.iter();
 
-    let opcode    = decode_u16(&mut iter).unwrap();
-    let filename  = decode_string(&mut iter).unwrap();
-    let mode_name = decode_string(&mut iter).unwrap();
+    match decode_u16(&mut iter) {
+        Some(1) => {
+            if let Some(filename) = decode_string(&mut iter) {
+                if let Some(mode_name) = decode_string(&mut iter) {
+                    return Packet::RRQ(filename, mode_name)
+                }
+            }
 
-    println!("filename: {}", filename);
-    println!("opcode: {}", opcode);
-    println!("mode_name: {}", mode_name);
+            Packet::Error
+        },
+        Some(_) | None => {
+            Packet::Error
+        }
+    }
 }
 
 fn decode_u16<'a, I : Iterator<Item=&'a u8>>(iter : &mut I) -> Option<u16> {
+    // FIXME big/little endian support
     if let Some(i) = iter.next() {
         let mut r = *i as u16;
         r = r << 8;
