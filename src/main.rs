@@ -1,5 +1,9 @@
+extern crate byteorder;
+
+use std::io;
 use std::net::UdpSocket;
-use std::iter::Iterator;
+use std::str;
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 const MAX_PACKET_SIZE : usize = 512;
 
@@ -25,7 +29,7 @@ fn main() {
             println!("Got {} bytes from {}.", amt, src);
             match decode(&buf[..amt]) {
                 Some(Packet::RRQ(filename, mode_name)) => {
-                    println!("RRQ filename={}, mode_name={}", filename, mode_name);
+                    println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
                     let out = encode(Packet::ERROR(1, "Test".to_string())).unwrap();
 
@@ -77,63 +81,55 @@ fn encode_str(buf : &mut Vec<u8>, string : String) {
     buf.push(0);
 }
 
-fn decode(p : & [u8]) -> Option<Packet> {
-    let mut iter = p.iter();
+fn decode(p : &[u8]) -> Option<Packet> {
+    let mut reader = io::Cursor::new(p);
 
-    match decode_u16(&mut iter) {
-        // RRQ opcode 1
-        Some(1) => {
-            if let Some(filename) = decode_string(&mut iter) {
-                if let Some(mode_name) = decode_string(&mut iter) {
-                    return Some(Packet::RRQ(filename, mode_name))
+    let opcode_result = reader.read_u16::<byteorder::BigEndian>();
+
+    match opcode_result {
+        Ok(opcode) => {
+            match opcode {
+                // RRQ opcode 1
+                1 => {
+                    if let Some(filename) = decode_string(&mut reader) {
+                        if let Some(mode_name) = decode_string(&mut reader) {
+                            return Some(Packet::RRQ(filename, mode_name))
+                        }
+                    }
+                }
+                5 => {
+                    if let Ok(error_code) = reader.read_u16::<byteorder::BigEndian>() {
+                        if let Some(error_message) = decode_string(&mut reader) {
+                            return Some(Packet::ERROR(error_code, error_message))
+                        }
+                    }
+                },
+                _ => {
+                    println!("Unknown opcode");
                 }
             }
-
-            None
         },
-        // ERROR opcode 5
-        Some(5) => {
-            if let Some(error_code) = decode_u16(&mut iter) {
-                if let Some(error_message) = decode_string(&mut iter) {
-                    return Some(Packet::ERROR(error_code, error_message))
-                }
-            }
-
-            None
-        },
-        Some(_) | None => {
-            None
-        }
-    }
-}
-
-fn decode_u16<'a, I : Iterator<Item=&'a u8>>(iter : &mut I) -> Option<u16> {
-    // FIXME big/little endian support
-    if let Some(i) = iter.next() {
-        let mut r = *i as u16;
-        r = r << 8;
-
-        if let Some(j) = iter.next() {
-            r = r + *j as u16;
-            return Some(r)
+        Err(_) => {
+            println!("Error");
         }
     }
 
     None
 }
 
-fn decode_string<'a, I : Iterator<Item=&'a u8>>(iter : &mut I) -> Option<String> {
-    let mut string = "".to_string();
+fn decode_string<T : byteorder::ReadBytesExt>(reader : &mut T) -> Option<String> {
+    let mut string_bytes = Vec::new();
 
-    while let Some(x) = iter.next() {
-        if *x == 0 {
-            return Some(string)
+    while let Ok(c) = reader.read_u8() {
+        if c == 0u8 {
+            break;
         }
-        else {
-            let ch = std::char::from_u32(*x as u32).unwrap();
-            string.push(ch);
-        }
+
+        string_bytes.push(c);
     }
 
-    None
+    match str::from_utf8(&string_bytes[..]) {
+        Ok(str) => Some(str.to_string()),
+        Err(_) => None,
+    }
 }
