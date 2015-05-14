@@ -33,7 +33,7 @@ fn main() {
 
                     let out = encode(Packet::ERROR(1, "Test".to_string())).unwrap();
 
-                    socket.send_to(&out[..], src);
+                    socket.send_to(&out[..], src).unwrap();
                 },
                 Some(Packet::ERROR(error_code, error_msg)) => {
                     println!("ERR error_code={}, error_msg={}", error_code, error_msg);
@@ -52,12 +52,9 @@ fn encode(packet : Packet) -> Option<Vec<u8>> {
 
     match packet {
         Packet::ERROR(error_code, error_string) => {
-            // opcode
-            encode_u16(&mut buf, 5);
-            // error code
-            encode_u16(&mut buf, error_code);
-            // message
-            encode_str(&mut buf, error_string);
+            buf.write_u16::<BigEndian>(5).unwrap(); // opcode
+            buf.write_u16::<BigEndian>(error_code).unwrap(); // error code
+            encode_str(&mut buf, error_string); // message
 
             return Some(buf)
         },
@@ -69,16 +66,11 @@ fn encode(packet : Packet) -> Option<Vec<u8>> {
     None
 }
 
-fn encode_u16(buf : &mut Vec<u8>, value : u16) {
-    buf.push(((value >> 8) & 0xff) as u8);
-    buf.push((value & 0xff) as u8);
-}
-
 fn encode_str(buf : &mut Vec<u8>, string : String) {
     for c in string.chars() {
-        buf.push(c as u8);
+        buf.write_u8(c as u8).unwrap();
     }
-    buf.push(0);
+    buf.write_u8(0u8).unwrap();
 }
 
 fn decode(p : &[u8]) -> Option<Packet> {
