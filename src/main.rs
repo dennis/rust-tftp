@@ -54,7 +54,7 @@ fn encode(packet : Packet) -> Option<Vec<u8>> {
         Packet::ERROR(error_code, error_string) => {
             buf.write_u16::<BigEndian>(5).unwrap(); // opcode
             buf.write_u16::<BigEndian>(error_code).unwrap(); // error code
-            encode_str(&mut buf, error_string); // message
+            encode_string(&mut buf, error_string); // message
 
             return Some(buf)
         },
@@ -66,7 +66,7 @@ fn encode(packet : Packet) -> Option<Vec<u8>> {
     None
 }
 
-fn encode_str(buf : &mut Vec<u8>, string : String) {
+fn encode_string(buf : &mut Vec<u8>, string : String) {
     for c in string.chars() {
         buf.write_u8(c as u8).unwrap();
     }
