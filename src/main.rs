@@ -7,7 +7,7 @@ const MAX_PACKET_SIZE : usize = 512;
 
 enum Packet {
     RRQ(String, String),
-    Error,
+    ERROR(u16, String),
 }
 
 fn main() {
@@ -24,11 +24,17 @@ fn main() {
         Ok((amt, src)) => {
             println!("Got {} bytes from {}.", amt, src);
             match decode(&buf[..amt]) {
-                Packet::RRQ(filename, mode_name) => {
-                    println!("filename: {}", filename);
-                    println!("mode_name: {}", mode_name);
+                Some(Packet::RRQ(filename, mode_name)) => {
+                    println!("RRQ filename={}, mode_name={}", filename, mode_name);
+
+                    let out = encode(Packet::ERROR(1, "Test".to_string())).unwrap();
+
+                    socket.send_to(&out[..], src);
                 },
-                _ => {
+                Some(Packet::ERROR(error_code, error_msg)) => {
+                    println!("ERR error_code={}, error_msg={}", error_code, error_msg);
+                },
+                None => {
                     println!("ERROR");
                 }
             }
@@ -37,21 +43,66 @@ fn main() {
     }
 }
 
-fn decode(p : & [u8]) -> Packet{
+fn encode(packet : Packet) -> Option<Vec<u8>> {
+    let mut buf : Vec<u8> = Vec::new();
+
+    match packet {
+        Packet::ERROR(error_code, error_string) => {
+            // opcode
+            encode_u16(&mut buf, 5);
+            // error code
+            encode_u16(&mut buf, error_code);
+            // message
+            encode_str(&mut buf, error_string);
+
+            return Some(buf)
+        },
+        _ => {
+            panic!("Unsupported");
+        }
+    }
+
+    None
+}
+
+fn encode_u16(buf : &mut Vec<u8>, value : u16) {
+    buf.push(((value >> 8) & 0xff) as u8);
+    buf.push((value & 0xff) as u8);
+}
+
+fn encode_str(buf : &mut Vec<u8>, string : String) {
+    for c in string.chars() {
+        buf.push(c as u8);
+    }
+    buf.push(0);
+}
+
+fn decode(p : & [u8]) -> Option<Packet> {
     let mut iter = p.iter();
 
     match decode_u16(&mut iter) {
+        // RRQ opcode 1
         Some(1) => {
             if let Some(filename) = decode_string(&mut iter) {
                 if let Some(mode_name) = decode_string(&mut iter) {
-                    return Packet::RRQ(filename, mode_name)
+                    return Some(Packet::RRQ(filename, mode_name))
                 }
             }
 
-            Packet::Error
+            None
+        },
+        // ERROR opcode 5
+        Some(5) => {
+            if let Some(error_code) = decode_u16(&mut iter) {
+                if let Some(error_message) = decode_string(&mut iter) {
+                    return Some(Packet::ERROR(error_code, error_message))
+                }
+            }
+
+            None
         },
         Some(_) | None => {
-            Packet::Error
+            None
         }
     }
 }
