@@ -4,6 +4,7 @@ use std::io;
 use std::net::UdpSocket;
 use std::str;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::io::Write;
 
 const MAX_PACKET_SIZE : usize = 512;
 
@@ -36,9 +37,10 @@ impl ErrorCode {
     }
 }
 
-enum Packet {
+enum Packet<'a> {
     RRQ(String, String),
     ERROR(ErrorCode, String),
+    Data(u16, &'a[u8]),
 }
 
 fn main() {
@@ -51,6 +53,8 @@ fn main() {
     let mut buf = [0u8; MAX_PACKET_SIZE];
 
     println!("Waiting for UDP packet on port 127.0.0.1:6969");
+    println!(" requesting /hello will return \"world\"");
+    println!(" anything else returns File not found");
     match socket.recv_from(&mut buf) {
         Ok((amt, src)) => {
             println!("Got {} bytes from {}.", amt, src);
@@ -58,12 +62,23 @@ fn main() {
                 Ok(Packet::RRQ(filename, mode_name)) => {
                     println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
-                    let out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
+                    let out;
+
+                    if filename == "hello" {
+                        out = encode(Packet::Data(1, "world".to_string().as_bytes())).unwrap();
+                    }
+                    else {
+                        out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
+                    }
+
 
                     socket.send_to(&out[..], src).unwrap();
                 },
                 Ok(Packet::ERROR(error_code, error_msg)) => {
                     println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
+                },
+                Ok(Packet::Data(_, _)) => {
+                    unimplemented!();
                 },
                 Err(err) => {
                     println!("Error: {}", err);
@@ -92,7 +107,20 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
             Ok(buf)
         },
         Packet::RRQ(_, _) => {
-            Err("Unsuported packet to encode")
+            unimplemented!();
+        },
+        Packet::Data(block_no, data) => {
+            if let Err(_) = buf.write_u16::<BigEndian>(3) {
+                return Err("Error writing opcode")
+            }
+            if let Err(_) = buf.write_u16::<BigEndian>(block_no) {
+                return Err("Error writing block #")
+            }
+            if let Err(_) = buf.write_all(data) {
+                return Err("Error writing data")
+            }
+
+            Ok(buf)
         }
     }
 }
