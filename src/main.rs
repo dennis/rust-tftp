@@ -79,11 +79,17 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
 
     match packet {
         Packet::ERROR(error_code, error_string) => {
-            buf.write_u16::<BigEndian>(5).unwrap(); // opcode
-            buf.write_u16::<BigEndian>(error_code as u16).unwrap(); // error code
-            encode_string(&mut buf, error_string); // message
+            if let Err(_) = buf.write_u16::<BigEndian>(5) {
+                return Err("Error writing opcode")
+            }
+            if let Err(_) = buf.write_u16::<BigEndian>(error_code as u16) {
+                return Err("Error writing error_code")
+            }
+            if let Err(_) = encode_string(&mut buf, error_string) {
+                return Err("Error writing error_message")
+            }
 
-            return Ok(buf)
+            Ok(buf)
         },
         Packet::RRQ(_, _) => {
             Err("Unsuported packet to encode")
@@ -91,11 +97,18 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
     }
 }
 
-fn encode_string(buf : &mut Vec<u8>, string : String) {
+fn encode_string(buf : &mut Vec<u8>, string : String) -> Result<&'static str, &'static str>{
     for c in string.chars() {
-        buf.write_u8(c as u8).unwrap();
+        if let Err(_) = buf.write_u8(c as u8) {
+            return Err("Error writing packet")
+        }
     }
-    buf.write_u8(0u8).unwrap();
+    if let Err(_) = buf.write_u8(0u8) {
+        return Err("Error writing packet")
+    }
+    else {
+        return Ok("Done")
+    }
 }
 
 fn decode(p : &[u8]) -> Result<Packet, &str> {
