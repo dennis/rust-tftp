@@ -55,18 +55,18 @@ fn main() {
         Ok((amt, src)) => {
             println!("Got {} bytes from {}.", amt, src);
             match decode(&buf[..amt]) {
-                Some(Packet::RRQ(filename, mode_name)) => {
+                Ok(Packet::RRQ(filename, mode_name)) => {
                     println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
                     let out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
 
                     socket.send_to(&out[..], src).unwrap();
                 },
-                Some(Packet::ERROR(error_code, error_msg)) => {
+                Ok(Packet::ERROR(error_code, error_msg)) => {
                     println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
                 },
-                None => {
-                    println!("ERROR");
+                Err(err) => {
+                    println!("Error: {}", err);
                 }
             }
         },
@@ -74,7 +74,7 @@ fn main() {
     }
 }
 
-fn encode(packet : Packet) -> Option<Vec<u8>> {
+fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
     let mut buf : Vec<u8> = Vec::new();
 
     match packet {
@@ -83,14 +83,12 @@ fn encode(packet : Packet) -> Option<Vec<u8>> {
             buf.write_u16::<BigEndian>(error_code as u16).unwrap(); // error code
             encode_string(&mut buf, error_string); // message
 
-            return Some(buf)
+            return Ok(buf)
         },
         _ => {
-            panic!("Unsupported");
+            Err("Unsuported packet to encode")
         }
     }
-
-    None
 }
 
 fn encode_string(buf : &mut Vec<u8>, string : String) {
@@ -100,7 +98,7 @@ fn encode_string(buf : &mut Vec<u8>, string : String) {
     buf.write_u8(0u8).unwrap();
 }
 
-fn decode(p : &[u8]) -> Option<Packet> {
+fn decode(p : &[u8]) -> Result<Packet, &str> {
     let mut reader = io::Cursor::new(p);
 
     let opcode_result = reader.read_u16::<byteorder::BigEndian>();
@@ -110,33 +108,33 @@ fn decode(p : &[u8]) -> Option<Packet> {
             match opcode {
                 // RRQ opcode 1
                 1 => {
-                    if let Some(filename) = decode_string(&mut reader) {
-                        if let Some(mode_name) = decode_string(&mut reader) {
-                            return Some(Packet::RRQ(filename, mode_name))
+                    if let Ok(filename) = decode_string(&mut reader) {
+                        if let Ok(mode_name) = decode_string(&mut reader) {
+                            return Ok(Packet::RRQ(filename, mode_name))
                         }
                     }
                 }
                 5 => {
                     if let Ok(error_code) = reader.read_u16::<byteorder::BigEndian>() {
-                        if let Some(error_message) = decode_string(&mut reader) {
-                            return Some(Packet::ERROR(ErrorCode::from_u16(error_code), error_message))
+                        if let Ok(error_message) = decode_string(&mut reader) {
+                            return Ok(Packet::ERROR(ErrorCode::from_u16(error_code), error_message))
                         }
                     }
                 },
                 _ => {
-                    println!("Unknown opcode");
+                    return Err("Unknown opcode")
                 }
             }
         },
         Err(_) => {
-            println!("Error");
+            return Err("Error decoding opcode")
         }
     }
 
-    None
+    Err("Error parsing packet")
 }
 
-fn decode_string<T : byteorder::ReadBytesExt>(reader : &mut T) -> Option<String> {
+fn decode_string<T : byteorder::ReadBytesExt>(reader : &mut T) -> Result<String, &str> {
     let mut string_bytes = Vec::new();
 
     while let Ok(c) = reader.read_u8() {
@@ -148,7 +146,7 @@ fn decode_string<T : byteorder::ReadBytesExt>(reader : &mut T) -> Option<String>
     }
 
     match str::from_utf8(&string_bytes[..]) {
-        Ok(str) => Some(str.to_string()),
-        Err(_) => None,
+        Ok(str) => Ok(str.to_string()),
+        Err(_) => Err("Cannot decode string as UTF-8"),
     }
 }
