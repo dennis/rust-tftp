@@ -9,9 +9,36 @@ const MAX_PACKET_SIZE : usize = 512;
 
 // https://www.ietf.org/rfc/rfc1350.txt
 
+enum ErrorCode {
+    NotDefined                 = 0,
+    FileNotFound               = 1,
+    AccessViolation            = 2,
+    DiskFullOrAllocationFailed = 3,
+    IllegalTftpOperation       = 4,
+    UnknownTransferId          = 5,
+    FileAlreadyExists          = 6,
+    NoSuchUser                 = 7
+}
+
+impl ErrorCode {
+    fn from_u16(val : u16) -> ErrorCode {
+        match val {
+            0 => ErrorCode::NotDefined,
+            1 => ErrorCode::FileNotFound,
+            2 => ErrorCode::AccessViolation,
+            3 => ErrorCode::DiskFullOrAllocationFailed,
+            4 => ErrorCode::IllegalTftpOperation,
+            5 => ErrorCode::UnknownTransferId,
+            6 => ErrorCode::FileAlreadyExists,
+            7 => ErrorCode::NoSuchUser,
+            _ => ErrorCode::NotDefined,
+        }
+    }
+}
+
 enum Packet {
     RRQ(String, String),
-    ERROR(u16, String),
+    ERROR(ErrorCode, String),
 }
 
 fn main() {
@@ -31,12 +58,12 @@ fn main() {
                 Some(Packet::RRQ(filename, mode_name)) => {
                     println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
-                    let out = encode(Packet::ERROR(1, "Test".to_string())).unwrap();
+                    let out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
 
                     socket.send_to(&out[..], src).unwrap();
                 },
                 Some(Packet::ERROR(error_code, error_msg)) => {
-                    println!("ERR error_code={}, error_msg={}", error_code, error_msg);
+                    println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
                 },
                 None => {
                     println!("ERROR");
@@ -53,7 +80,7 @@ fn encode(packet : Packet) -> Option<Vec<u8>> {
     match packet {
         Packet::ERROR(error_code, error_string) => {
             buf.write_u16::<BigEndian>(5).unwrap(); // opcode
-            buf.write_u16::<BigEndian>(error_code).unwrap(); // error code
+            buf.write_u16::<BigEndian>(error_code as u16).unwrap(); // error code
             encode_string(&mut buf, error_string); // message
 
             return Some(buf)
@@ -92,7 +119,7 @@ fn decode(p : &[u8]) -> Option<Packet> {
                 5 => {
                     if let Ok(error_code) = reader.read_u16::<byteorder::BigEndian>() {
                         if let Some(error_message) = decode_string(&mut reader) {
-                            return Some(Packet::ERROR(error_code, error_message))
+                            return Some(Packet::ERROR(ErrorCode::from_u16(error_code), error_message))
                         }
                     }
                 },
