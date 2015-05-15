@@ -85,7 +85,7 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
 
             return Ok(buf)
         },
-        _ => {
+        Packet::RRQ(_, _) => {
             Err("Unsuported packet to encode")
         }
     }
