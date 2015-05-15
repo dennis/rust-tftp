@@ -39,6 +39,8 @@ impl ErrorCode {
 
 enum Packet<'a> {
     RRQ(String, String),
+    WRQ(String, String),
+    ACK(u16),
     ERROR(ErrorCode, String),
     Data(u16, &'a[u8]),
 }
@@ -77,7 +79,16 @@ fn main() {
                 Ok(Packet::ERROR(error_code, error_msg)) => {
                     println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
                 },
-                Ok(Packet::Data(_, _)) => {
+                Ok(Packet::Data(block_no, data)) => {
+                    println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
+                    unimplemented!();
+                },
+                Ok(Packet::WRQ(filename, mode_name)) => {
+                    println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
+                    unimplemented!();
+                },
+                Ok(Packet::ACK(block_no)) => {
+                    println!("ACL opcode=4, block_no={}", block_no);
                     unimplemented!();
                 },
                 Err(err) => {
@@ -109,6 +120,12 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
         Packet::RRQ(_, _) => {
             unimplemented!();
         },
+        Packet::WRQ(_, _) => {
+            unimplemented!();
+        },
+        Packet::ACK(_) => {
+            unimplemented!();
+        },
         Packet::Data(block_no, data) => {
             if let Err(_) = buf.write_u16::<BigEndian>(3) {
                 return Err("Error writing opcode")
@@ -121,7 +138,7 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
             }
 
             Ok(buf)
-        }
+        },
     }
 }
 
@@ -139,7 +156,7 @@ fn encode_string(buf : &mut Vec<u8>, string : String) -> Result<&'static str, &'
     }
 }
 
-fn decode(p : &[u8]) -> Result<Packet, &str> {
+fn decode(p : &[u8]) -> Result<Packet, String> {
     let mut reader = io::Cursor::new(p);
 
     let opcode_result = reader.read_u16::<byteorder::BigEndian>();
@@ -148,10 +165,15 @@ fn decode(p : &[u8]) -> Result<Packet, &str> {
         Ok(opcode) => {
             match opcode {
                 // RRQ opcode 1
-                1 => {
+                1|2 => {
                     if let Ok(filename) = decode_string(&mut reader) {
                         if let Ok(mode_name) = decode_string(&mut reader) {
-                            return Ok(Packet::RRQ(filename, mode_name))
+                            if opcode == 1 {
+                                return Ok(Packet::RRQ(filename, mode_name))
+                            }
+                            else { //if opcode == 2
+                                return Ok(Packet::WRQ(filename, mode_name))
+                            }
                         }
                     }
                 }
@@ -162,17 +184,17 @@ fn decode(p : &[u8]) -> Result<Packet, &str> {
                         }
                     }
                 },
-                _ => {
-                    return Err("Unknown opcode")
+                opcode => {
+                    return Err(format!("Unknown opcode: {}", opcode))
                 }
             }
         },
         Err(_) => {
-            return Err("Error decoding opcode")
+            return Err("Error decoding opcode".to_string())
         }
     }
 
-    Err("Error parsing packet")
+    Err("Error parsing packet".to_string())
 }
 
 fn decode_string<T : byteorder::ReadBytesExt>(reader : &mut T) -> Result<String, &str> {
