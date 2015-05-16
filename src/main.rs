@@ -37,12 +37,16 @@ impl ErrorCode {
     }
 }
 
-enum Packet<'a> {
+enum Packet {
     RRQ(String, String),
     WRQ(String, String),
     ACK(u16),
     ERROR(ErrorCode, String),
-    Data(u16, &'a[u8]),
+    Data(u16, Vec<u8>),
+}
+
+fn u8_array_to_vec(arr: &[u8]) -> Vec<u8> {
+    arr.iter().cloned().collect()
 }
 
 fn main() {
@@ -67,7 +71,7 @@ fn main() {
                     let out;
 
                     if filename == "hello" {
-                        out = encode(Packet::Data(1, "world".to_string().as_bytes())).unwrap();
+                        out = encode(Packet::Data(1, u8_array_to_vec("world".to_string().as_bytes()))).unwrap();
                     }
                     else {
                         out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
@@ -133,7 +137,7 @@ fn encode(packet : Packet) -> Result<Vec<u8>, &'static str> {
             if let Err(_) = buf.write_u16::<BigEndian>(block_no) {
                 return Err("Error writing block #")
             }
-            if let Err(_) = buf.write_all(data) {
+            if let Err(_) = buf.write_all(&data[..]) {
                 return Err("Error writing data")
             }
 
@@ -163,8 +167,13 @@ fn decode(p : &[u8]) -> Result<Packet, String> {
 
     match opcode_result {
         Ok(opcode) => {
+            // 1 - RRQ
+            // 2 - WRQ
+            // 3 - DATA
+            // 4 - ACK
+            // 5 - ERROR
             match opcode {
-                // RRQ opcode 1
+                // RRQ opcode 1, WRQ 2
                 1|2 => {
                     if let Ok(filename) = decode_string(&mut reader) {
                         if let Ok(mode_name) = decode_string(&mut reader) {
