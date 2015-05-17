@@ -1,10 +1,15 @@
 extern crate byteorder;
+extern crate time;
 
-use std::io;
-use std::net::UdpSocket;
-use std::str;
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::collections::HashMap;
 use std::io::Write;
+use std::io;
+use std::net::{UdpSocket, SocketAddr};
+use std::str;
+use time::SteadyTime;
+use std::collections::hash_map::Entry::{Occupied, Vacant};
+
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 const MAX_PACKET_SIZE : usize = 512;
 
@@ -49,6 +54,12 @@ fn u8_array_to_vec(arr: &[u8]) -> Vec<u8> {
     arr.iter().cloned().collect()
 }
 
+struct Session {
+    last_ack_block_no : u16,
+    last_sent_block_no : u16,
+    last_activity : time::SteadyTime,
+}
+
 fn main() {
     let local_addr = "127.0.0.1:6969";
 
@@ -57,6 +68,7 @@ fn main() {
         Err(e) => panic!("couldn't bind socket: {}", e),
     };
     let mut buf = [0u8; MAX_PACKET_SIZE];
+    let mut sessions = HashMap::new();
 
     println!("Waiting for UDP packet on port 127.0.0.1:6969");
     println!(" requesting /hello will return \"world\"");
@@ -66,6 +78,27 @@ fn main() {
         match socket.recv_from(&mut buf) {
             Ok((amt, src)) => {
                 println!("Got {} bytes from {}.", amt, src);
+
+                // FIXME Expire old sessions
+
+                match sessions.entry(src) {
+                    Vacant(entry) => {
+                        println!("New session");
+
+                        entry.insert(Session{
+                            last_activity: SteadyTime::now(),
+                            last_ack_block_no: 0,
+                            last_sent_block_no: 0
+                        });
+                    },
+                    Occupied(entry) => {
+                        println!("Known session");
+
+                        let mut session = entry.into_mut();
+                        session.last_activity = SteadyTime::now();
+                    }
+                }
+
                 match TftpEnDecoder::decode(&buf[..amt]) {
                     Ok(Packet::RRQ(filename, mode_name)) => {
                         println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
