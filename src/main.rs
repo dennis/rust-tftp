@@ -61,46 +61,52 @@ fn main() {
     println!("Waiting for UDP packet on port 127.0.0.1:6969");
     println!(" requesting /hello will return \"world\"");
     println!(" anything else returns File not found");
-    match socket.recv_from(&mut buf) {
-        Ok((amt, src)) => {
-            println!("Got {} bytes from {}.", amt, src);
-            match decode(&buf[..amt]) {
-                Ok(Packet::RRQ(filename, mode_name)) => {
-                    println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
-                    let out;
+    loop {
+        match socket.recv_from(&mut buf) {
+            Ok((amt, src)) => {
+                println!("Got {} bytes from {}.", amt, src);
+                match decode(&buf[..amt]) {
+                    Ok(Packet::RRQ(filename, mode_name)) => {
+                        println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
-                    if filename == "hello" {
-                        out = encode(Packet::Data(1, u8_array_to_vec("world".to_string().as_bytes()))).unwrap();
+                        let out;
+
+                        if filename == "hello" {
+                            out = encode(Packet::Data(1, u8_array_to_vec("world".to_string().as_bytes()))).unwrap();
+                        }
+                        else {
+                            out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
+                        }
+
+
+                        socket.send_to(&out[..], src).unwrap();
+                    },
+                    Ok(Packet::ERROR(error_code, error_msg)) => {
+                        println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
+                    },
+                    Ok(Packet::Data(block_no, data)) => {
+                        println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
+                        unimplemented!();
+                    },
+                    Ok(Packet::WRQ(filename, mode_name)) => {
+                        println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
+                        unimplemented!();
+                    },
+                    Ok(Packet::ACK(block_no)) => {
+                        println!("ACL opcode=4, block_no={}", block_no);
+                        unimplemented!();
+                    },
+                    Err(err) => {
+                        println!("Error: {}", err);
                     }
-                    else {
-                        out = encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
-                    }
-
-
-                    socket.send_to(&out[..], src).unwrap();
-                },
-                Ok(Packet::ERROR(error_code, error_msg)) => {
-                    println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
-                },
-                Ok(Packet::Data(block_no, data)) => {
-                    println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
-                    unimplemented!();
-                },
-                Ok(Packet::WRQ(filename, mode_name)) => {
-                    println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
-                    unimplemented!();
-                },
-                Ok(Packet::ACK(block_no)) => {
-                    println!("ACL opcode=4, block_no={}", block_no);
-                    unimplemented!();
-                },
-                Err(err) => {
-                    println!("Error: {}", err);
                 }
+            },
+            Err(err) => { 
+                println!("Can't recv_from: {}", err);
+                break;
             }
-        },
-        Err(err) => println!("Can't recv_from: {}", err)
+        }
     }
 }
 
