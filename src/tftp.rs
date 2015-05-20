@@ -22,9 +22,7 @@ struct Session {
     last_activity : ::time::SteadyTime,
 }
 
-pub fn wip_server() {
-    let local_addr = "127.0.0.1:6969";
-
+pub fn wip_server(local_addr : &str) {
     let socket = match UdpSocket::bind(local_addr) {
         Ok(s) => s,
         Err(e) => panic!("couldn't bind socket: {}", e),
