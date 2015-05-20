@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::net::{UdpSocket, SocketAddr};
-use time::SteadyTime;
+use time::{SteadyTime, Duration};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 
 use packet::{Packet, ErrorCode};
 use protocol::Protocol;
 
 const MAX_PACKET_SIZE : usize = 512;
+const SESSION_REAPER_CHECK_SEC : i64 = 10;
+const SESSION_MAX_AGE_SEC : i64 = 300;
 
 // https://www.ietf.org/rfc/rfc1350.txt
 
@@ -34,28 +36,27 @@ pub fn wip_server() {
     println!(" requesting /hello will return \"world\"");
     println!(" anything else returns File not found");
 
+    let mut last_session_reaper_check = SteadyTime::now();
+
     loop {
-        match socket.recv_from(&mut buf) {
+        let input = socket.recv_from(&mut buf);
+        let now = SteadyTime::now();
+
+        match input {
             Ok((amt, src)) => {
                 println!("Got {} bytes from {}.", amt, src);
 
-                // FIXME Expire old sessions
-
                 match sessions.entry(src) {
                     Vacant(entry) => {
-                        println!("New session");
-
                         entry.insert(Session{
-                            last_activity: SteadyTime::now(),
+                            last_activity: now,
                             last_ack_block_no: 0,
                             last_sent_block_no: 0
                         });
                     },
                     Occupied(entry) => {
-                        println!("Known session");
-
                         let mut session = entry.into_mut();
-                        session.last_activity = SteadyTime::now();
+                        session.last_activity = now;
                     }
                 }
 
@@ -87,7 +88,7 @@ pub fn wip_server() {
                         unimplemented!();
                     },
                     Ok(Packet::ACK(block_no)) => {
-                        println!("ACL opcode=4, block_no={}", block_no);
+                        println!("ACK opcode=4, block_no={}", block_no);
                         unimplemented!();
                     },
                     Err(err) => {
@@ -99,6 +100,21 @@ pub fn wip_server() {
                 println!("Can't recv_from: {}", err);
                 break;
             }
+        }
+
+        if now - last_session_reaper_check > Duration::seconds(SESSION_REAPER_CHECK_SEC) {
+            let mut deletion : Vec<SocketAddr> = Vec::new();
+            for pair in sessions.iter() {
+                let (socket, session) = pair;
+                if now - session.last_activity > Duration::seconds(SESSION_MAX_AGE_SEC) {
+                    deletion.push(socket.clone());
+                }
+            }
+            for socket in deletion {
+                sessions.remove(&socket);
+            }
+
+            last_session_reaper_check = now;
         }
     }
 }
