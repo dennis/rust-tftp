@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::net::{UdpSocket, SocketAddr};
 use time::{SteadyTime, Duration};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::fs::File;
+use std::io::Read;
 
 use packet::{Packet, ErrorCode};
 use protocol::Protocol;
@@ -64,13 +66,21 @@ pub fn wip_server(local_addr : &str) {
 
                         let out;
 
-                        if filename == "hello" {
-                            out = Protocol::encode(Packet::Data(1, u8_array_to_vec("world".to_string().as_bytes()))).unwrap();
-                        }
-                        else {
-                            out = Protocol::encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap();
-                        }
+                        match File::open(filename) {
+                            Ok(mut file) => {
+                                let mut s = String::new();
+                                file.read_to_string(&mut s).unwrap();
 
+                                //let data = u8_array_to_vec("world".to_string().as_bytes());
+                                let data = u8_array_to_vec(s.as_bytes());
+
+                                out = Protocol::encode(Packet::Data(1, data)).unwrap()
+                            },
+                            Err(err) =>  {
+                                println!("Error: {}", err);
+                                out = Protocol::encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap()
+                            }
+                        }
 
                         socket.send_to(&out[..], src).unwrap();
                     },

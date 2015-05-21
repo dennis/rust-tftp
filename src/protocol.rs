@@ -88,6 +88,12 @@ impl Protocol {
                                 }
                             }
                         }
+                    },
+                    // ACK
+                    4 => {
+                        if let Ok(block_no) = reader.read_u16::<::byteorder::BigEndian>() {
+                            return Ok(Packet::ACK(block_no))
+                        }
                     }
                     5 => {
                         if let Ok(error_code) = reader.read_u16::<::byteorder::BigEndian>() {
