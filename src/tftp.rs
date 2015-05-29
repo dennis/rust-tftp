@@ -96,52 +96,42 @@ pub fn wip_server(local_addr : &str) {
                     }
                 }
 
-                match Protocol::decode(&buf[..amt]) {
-                    Ok(Packet::RRQ(filename, mode_name)) => {
-                        match sessions.entry(src) {
-                            Vacant(_) => {
-                                // We have just added it, so this shouldn't be possible
-                                // No session found
-                                let out = Protocol::encode(Packet::ERROR(ErrorCode::UnknownTransferId, "".to_string())).unwrap();
-                                socket.send_to(&out[..], src).unwrap();
+                match sessions.entry(src) {
+                    Vacant(_) => {
+                        // We have just added it, so this shouldn't be possible
+                        // No session found
+                        let out = Protocol::encode(Packet::ERROR(ErrorCode::UnknownTransferId, "".to_string())).unwrap();
+                        socket.send_to(&out[..], src).unwrap();
+                    },
+                    Occupied(entry) => {
+                        let mut session = entry.into_mut();
+                        session.last_activity = now;
+
+                        match Protocol::decode(&buf[..amt]) {
+                            Ok(Packet::RRQ(filename, mode_name)) => {
+                                handle_rrq(&mut session, &socket, &src, filename, mode_name);
                             },
-                            Occupied(entry) => {
-                                let mut session = entry.into_mut();
-                                session.last_activity = now;
-                                handle_rrq(&mut session, &socket, &src, now, filename, mode_name);
+                            Ok(Packet::ERROR(error_code, error_msg)) => {
+                                println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
+                            },
+                            Ok(Packet::Data(block_no, data)) => {
+                                println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
+                                unimplemented!();
+                            },
+                            Ok(Packet::WRQ(filename, mode_name)) => {
+                                println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
+                                unimplemented!();
+                            },
+                            Ok(Packet::ACK(block_no)) => {
+                                handle_ack(&mut session, &socket, &src, block_no);
+                            },
+                            Err(err) => {
+                                println!("Error: {}", err);
                             }
                         }
-                    },
-                    Ok(Packet::ERROR(error_code, error_msg)) => {
-                        println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
-                    },
-                    Ok(Packet::Data(block_no, data)) => {
-                        println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
-                        unimplemented!();
-                    },
-                    Ok(Packet::WRQ(filename, mode_name)) => {
-                        println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
-                        unimplemented!();
-                    },
-                    Ok(Packet::ACK(block_no)) => {
-                        match sessions.entry(src) {
-                            Vacant(_) => {
-                                // We have just added it, so this shouldn't be possible
-                                // No session found
-                                let out = Protocol::encode(Packet::ERROR(ErrorCode::UnknownTransferId, "".to_string())).unwrap();
-                                socket.send_to(&out[..], src).unwrap();
-                            },
-                            Occupied(entry) => {
-                                let mut session = entry.into_mut();
-                                session.last_activity = now;
-                                handle_ack(&mut session, &socket, &src, now, block_no);
-                            }
-                        }
-                    },
-                    Err(err) => {
-                        println!("Error: {}", err);
                     }
                 }
+
             },
             Err(err) => {
                 println!("Can't recv_from: {}", err);
@@ -166,7 +156,7 @@ pub fn wip_server(local_addr : &str) {
     }
 }
 
-fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, now : SteadyTime, filename : String, mode_name : String) {
+fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, filename : String, mode_name : String) {
     println!("RRQ opcode=1, filename={}, mode_name={}", filename, mode_name);
 
     let out;
@@ -187,7 +177,7 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, no
     socket.send_to(&out[..], src).unwrap();
 }
 
-fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, now : SteadyTime, block_no : u16) {
+fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16) {
     println!("ACK opcode=4, block_no={}, expected={}", block_no, session.last_sent_block_no);
 
     if block_no == session.last_sent_block_no {
