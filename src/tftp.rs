@@ -3,52 +3,16 @@ use std::net::{UdpSocket, SocketAddr};
 use time::{SteadyTime, Duration};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::fs::File;
-use std::io::Read;
 
 use packet::{Packet, ErrorCode};
 use protocol::Protocol;
+use stream::{TftpReadStream, NullStream, TftpReadStreamProvider};
 
 const MAX_PACKET_SIZE : usize = 512;
 const SESSION_REAPER_CHECK_SEC : i64 = 10;
 const SESSION_MAX_AGE_SEC : i64 = 300;
 
 // https://www.ietf.org/rfc/rfc1350.txt
-
-trait TftpReadStream {
-    fn read(&mut self, &mut Vec<u8>) -> Result<usize, ()> {
-        Err(())
-    }
-}
-
-struct NullStream;
-impl TftpReadStream for NullStream {
-    fn read(&mut self, _ : &mut Vec<u8>) -> Result<usize, ()> {
-        Ok(0)
-    }
-}
-
-impl TftpReadStream for String {
-    fn read(&mut self, buf : &mut Vec<u8>) -> Result<usize, ()> {
-        for data in self.as_bytes() {
-            buf.push(*data);
-        }
-
-        Ok(self.len())
-    }
-}
-
-impl TftpReadStream for File {
-    fn read(&mut self, buf : &mut Vec<u8>) -> Result<usize, ()> {
-        let mut s = String::new();
-        self.read_to_string(&mut s).unwrap();
-
-        for b in s.as_bytes() {
-            buf.push(*b);
-        }
-
-        Ok(buf.len())
-    }
-}
 
 struct Session {
     last_ack_block_no : u16,
@@ -67,8 +31,6 @@ pub fn wip_server(local_addr : &str) {
     let mut sessions = HashMap::new();
 
     println!("Waiting for UDP packet on port 127.0.0.1:6969");
-    println!(" requesting /hello will return \"world\"");
-    println!(" anything else returns File not found");
 
     let mut last_session_reaper_check = SteadyTime::now();
 
@@ -101,6 +63,7 @@ pub fn wip_server(local_addr : &str) {
                         // We have just added it, so this shouldn't be possible
                         // No session found
                         let out = Protocol::encode(Packet::ERROR(ErrorCode::UnknownTransferId, "".to_string())).unwrap();
+                        println!("Sending {} bytes", out.len());
                         socket.send_to(&out[..], src).unwrap();
                     },
                     Occupied(entry) => {
@@ -162,42 +125,57 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, fi
     let out;
     match handle_file_read(filename) {
         Ok(stream) => {
-            //let mut outbytes : Vec<u8> = Vec::new();
             session.send_stream = stream;
-            session.buffer.clear();
-            session.send_stream.read(&mut session.buffer).unwrap();
-            session.last_sent_block_no = 1;
-            out = Protocol::encode(Packet::Data(1, &session.buffer)).unwrap()
+            out = send_data_block(session, 1);
         },
         Err(_) => {
             // File not found
             out = Protocol::encode(Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string())).unwrap()
         }
     }
+    println!("  Sending {} bytes", out.len());
     socket.send_to(&out[..], src).unwrap();
+}
+
+fn send_data_block(session : &mut Session, block_no : u16) -> Vec<u8> {
+    let start : usize = ((block_no - 1) as usize) * MAX_PACKET_SIZE;
+    let length : usize = MAX_PACKET_SIZE;
+    println!("  send data block: start={}, length={}", start, length);
+    if let Ok(bytes) = session.send_stream.get_block(start, length) {
+        session.buffer = bytes.clone();
+        session.last_sent_block_no = block_no;
+        println!("  Sending Data block {}, {} bytes", block_no, bytes.len());
+        Protocol::encode(Packet::Data(block_no, &bytes)).unwrap()
+    }
+    else {
+        Protocol::encode(Packet::ERROR(ErrorCode::NotDefined, "I/O error eading block".to_string())).unwrap()
+    }
 }
 
 fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16) {
     println!("ACK opcode=4, block_no={}, expected={}", block_no, session.last_sent_block_no);
 
+    let out;
+    // we might send out block that does not exists
     if block_no == session.last_sent_block_no {
-        unimplemented!();
-        // send next block
+        println!("  Sending next block {}", block_no + 1);
+        out = send_data_block(session, block_no + 1);
     }
     else {
-        let out = Protocol::encode(Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_sent_block_no))).unwrap();
-        socket.send_to(&out[..], src).unwrap();
+        out = Protocol::encode(Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_sent_block_no))).unwrap();
     }
+    println!("  Sending {} bytes", out.len());
+    socket.send_to(&out[..], src).unwrap();
 }
 
 fn handle_file_read(filename : String) -> Result<Box<TftpReadStream>, ()> {
     if filename == "hello" {
-        Ok(Box::new("world".to_string()))
+        "world".to_string().get_tftp_read_stream()
     }
     else {
         match File::open(filename) {
-            Ok(file) => {
-                Ok(Box::new(file))
+            Ok(mut file) => {
+                file.get_tftp_read_stream()
             },
             Err(err) => {
                 println!("Error: {}", err);
