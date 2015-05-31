@@ -6,7 +6,7 @@ use std::fs::File;
 
 use packet::{Packet, ErrorCode};
 use protocol::Protocol;
-use stream::{TftpReadStream, NullStream, TftpReadStreamProvider};
+use stream::{TftpReadStream, NullStream, FileStream, StringStream};
 
 const MAX_PACKET_SIZE : usize = 512;
 const SESSION_REAPER_CHECK_SEC : i64 = 10;
@@ -15,7 +15,6 @@ const SESSION_MAX_AGE_SEC : i64 = 300;
 // https://www.ietf.org/rfc/rfc1350.txt
 
 struct Session {
-    last_ack_block_no : u16,
     last_sent_block_no : u16,
     last_activity : ::time::SteadyTime,
     send_stream : Box<TftpReadStream>,
@@ -46,7 +45,6 @@ pub fn wip_server(local_addr : &str) {
                     Vacant(entry) => {
                         entry.insert(Session{
                             last_activity: now,
-                            last_ack_block_no: 0,
                             last_sent_block_no: 0,
                             send_stream: Box::new(NullStream),
                             buffer : Vec::new()
@@ -170,12 +168,12 @@ fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, bl
 
 fn handle_file_read(filename : String) -> Result<Box<TftpReadStream>, ()> {
     if filename == "hello" {
-        "world".to_string().get_tftp_read_stream()
+        Ok(Box::new(StringStream::new("world".to_string())))
     }
     else {
         match File::open(filename) {
-            Ok(mut file) => {
-                file.get_tftp_read_stream()
+            Ok(file) => {
+                Ok(Box::new(FileStream::new(file)))
             },
             Err(err) => {
                 println!("Error: {}", err);
