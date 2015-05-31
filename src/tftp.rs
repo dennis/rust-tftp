@@ -17,7 +17,7 @@ const SESSION_MAX_AGE_SEC : i64 = 300;
 struct Session {
     last_sent_block_no : u16,
     last_activity : ::time::SteadyTime,
-    send_stream : Box<TftpReadStream>,
+    read_stream : Box<TftpReadStream>,
     buffer : Vec<u8>,
 }
 
@@ -60,7 +60,7 @@ pub fn wip_server(local_addr : &str) {
                         entry.insert(Session{
                             last_activity: now,
                             last_sent_block_no: 0,
-                            send_stream: Box::new(NullStream),
+                            read_stream: Box::new(NullStream),
                             buffer : Vec::new()
                         });
                     },
@@ -92,8 +92,7 @@ pub fn wip_server(local_addr : &str) {
                                 unimplemented!();
                             },
                             Ok(Packet::WRQ(filename, mode_name)) => {
-                                println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
-                                unimplemented!();
+                                handle_wrq(&mut session, &socket, &src, filename, mode_name);
                             },
                             Ok(Packet::ACK(block_no)) => {
                                 handle_ack(&mut session, &socket, &src, block_no);
@@ -134,7 +133,7 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, fi
 
     match handle_file_read(filename) {
         Ok(stream) => {
-            session.send_stream = stream;
+            session.read_stream = stream;
             send_data_block(session, &socket, &src, 1);
         },
         Err(_) => {
@@ -144,13 +143,18 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, fi
     }
 }
 
+fn handle_wrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, filename : String, mode_name : String) {
+    println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
+    unimplemented!();
+}
+
 fn send_data_block(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16) {
     let start : usize = ((block_no - 1) as usize) * MAX_PACKET_SIZE;
     let length : usize = MAX_PACKET_SIZE;
 
     println!("  Send data block: start={}, length={}", start, length);
 
-    if let Ok(bytes) = session.send_stream.get_block(start, length) {
+    if let Ok(bytes) = session.read_stream.get_block(start, length) {
         if bytes.len() > 0 {
             session.buffer = bytes.clone();
             session.last_sent_block_no = block_no;
