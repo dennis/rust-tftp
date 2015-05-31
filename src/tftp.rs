@@ -21,13 +21,18 @@ struct Session {
     buffer : Vec<u8>,
 }
 
+#[allow(unused_must_use)]
 fn send_packet(socket : &UdpSocket, peer : &SocketAddr, packet : Packet) {
-    let out = Protocol::encode(packet).unwrap();
-    println!("Sending {} bytes", out.len());
+    if let Ok(out) = Protocol::encode(packet) {
+        println!("Sending {} bytes", out.len());
 
-    // if we cannot send it, we just silently ignore it. The session will
-    // eventually get expired anyway
-    socket.send_to(&out[..], peer).unwrap();
+        // if we cannot send it, we just silently ignore it. The session will
+        // eventually get expired anyway
+        socket.send_to(&out[..], peer);
+    }
+    else {
+        println!("Cannot encode packet!");
+    }
 }
 
 pub fn wip_server(local_addr : &str) {
@@ -146,9 +151,11 @@ fn send_data_block(session : &mut Session, socket : &UdpSocket, src : &SocketAdd
     println!("  Send data block: start={}, length={}", start, length);
 
     if let Ok(bytes) = session.send_stream.get_block(start, length) {
-        session.buffer = bytes.clone();
-        session.last_sent_block_no = block_no;
-        send_packet(&socket, &src, Packet::Data(block_no, &bytes));
+        if bytes.len() > 0 {
+            session.buffer = bytes.clone();
+            session.last_sent_block_no = block_no;
+            send_packet(&socket, &src, Packet::Data(block_no, &bytes));
+        }
     }
     else {
         send_packet(&socket, &src, Packet::ERROR(ErrorCode::NotDefined, "I/O error eading block".to_string()))
@@ -158,7 +165,6 @@ fn send_data_block(session : &mut Session, socket : &UdpSocket, src : &SocketAdd
 fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16) {
     println!("ACK opcode=4, block_no={}, expected={}", block_no, session.last_sent_block_no);
 
-    // FIXME we might send out block that does not exists
     if block_no == session.last_sent_block_no {
         println!("  Sending next block {}", block_no + 1);
         send_data_block(session, &socket, &src, block_no + 1);
