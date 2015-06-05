@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::io::{Seek, SeekFrom};
 use std::iter::Iterator;
 
@@ -7,11 +7,20 @@ pub trait TftpReadStream {
     fn get_block(&mut self, start : usize, length: usize) -> Result<Vec<u8>, ()>;
 }
 
+pub trait TftpWriteStream {
+    fn add_block(&mut self, Box<Vec<u8>>) -> Result<(), ()>;
+}
+
 pub struct NullStream;
 impl TftpReadStream for NullStream {
     fn get_block(&mut self, _ : usize, _: usize) -> Result<Vec<u8>, ()> {
         let empty : Vec<u8> =  Vec::new();
         Ok(empty)
+    }
+}
+impl TftpWriteStream for NullStream {
+    fn add_block(&mut self, _ : Box<Vec<u8>>) -> Result<(), ()> {
+        Ok(())
     }
 }
 
@@ -60,7 +69,8 @@ impl TftpReadStream for FileStream {
         if let Ok(_) = self.file.seek(SeekFrom::Start(start as u64)) {
             let mut result : Vec<u8> = Vec::new();
 
-            for b in self.file.by_ref().take(length as u64).bytes() {
+            let file = Read::by_ref(&mut self.file);
+            for b in file.take(length as u64).bytes() {
                 if let Ok(b) = b {
                     result.push(b);
                 }
@@ -75,3 +85,14 @@ impl TftpReadStream for FileStream {
         }
     }
 }
+
+impl TftpWriteStream for FileStream {
+    fn add_block(&mut self, bytes : Box<Vec<u8>>) -> Result<(), ()> {
+        let file = Write::by_ref(&mut self.file);
+        match file.write_all(&bytes[..]) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(()),
+        }
+    }
+}
+

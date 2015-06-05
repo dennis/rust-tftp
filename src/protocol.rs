@@ -31,8 +31,14 @@ impl Protocol {
             Packet::WRQ(_, _) => {
                 unimplemented!();
             },
-            Packet::ACK(_) => {
-                unimplemented!();
+            Packet::ACK(block_no) => {
+                if let Err(_) = buf.write_u16::<BigEndian>(4) {
+                    return Err("Error writing opcode")
+                }
+                if let Err(_) = buf.write_u16::<BigEndian>(block_no) {
+                    return Err("Error writing block_no");
+                }
+                Ok(buf)
             },
             Packet::Data(block_no, data) => {
                 if let Err(_) = buf.write_u16::<BigEndian>(3) {
@@ -89,12 +95,23 @@ impl Protocol {
                             }
                         }
                     },
+                    // DATA
+                    3 => {
+                        if let Ok(block_no) = reader.read_u16::<::byteorder::BigEndian>() {
+                            let mut buf : Box<Vec<u8>> = Box::new(Vec::new());
+                            while let Ok(b) = reader.read_u8() {
+                                buf.push(b)
+                            }
+                            return Ok(Packet::Data(block_no, buf))
+                        }
+                    },
                     // ACK
                     4 => {
                         if let Ok(block_no) = reader.read_u16::<::byteorder::BigEndian>() {
                             return Ok(Packet::ACK(block_no))
                         }
                     }
+                    // ERROR
                     5 => {
                         if let Ok(error_code) = reader.read_u16::<::byteorder::BigEndian>() {
                             if let Ok(error_message) = Self::decode_string(&mut reader) {

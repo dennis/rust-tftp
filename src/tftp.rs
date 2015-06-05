@@ -6,19 +6,21 @@ use std::fs::File;
 
 use packet::{Packet, ErrorCode};
 use protocol::Protocol;
-use stream::{TftpReadStream, NullStream, FileStream, StringStream};
+use stream::{TftpReadStream, TftpWriteStream, NullStream, FileStream, StringStream};
 
-const MAX_PACKET_SIZE : usize = 512;
+const MAX_PACKET_SIZE : usize = 1024;
 const SESSION_REAPER_CHECK_SEC : i64 = 10;
 const SESSION_MAX_AGE_SEC : i64 = 300;
 
 // https://www.ietf.org/rfc/rfc1350.txt
 
 struct Session {
-    last_sent_block_no : u16,
+    last_block_no : u16,
     last_activity : ::time::SteadyTime,
     read_stream : Box<TftpReadStream>,
+    write_stream : Box<TftpWriteStream>,
     buffer : Vec<u8>,
+    dead : bool,
 }
 
 #[allow(unused_must_use)]
@@ -59,9 +61,11 @@ pub fn wip_server(local_addr : &str) {
                     Vacant(entry) => {
                         entry.insert(Session{
                             last_activity: now,
-                            last_sent_block_no: 0,
+                            last_block_no: 0,
                             read_stream: Box::new(NullStream),
-                            buffer : Vec::new()
+                            write_stream: Box::new(NullStream),
+                            buffer : Vec::new(),
+                            dead : false,
                         });
                     },
                     Occupied(entry) => {
@@ -85,11 +89,10 @@ pub fn wip_server(local_addr : &str) {
                                 handle_rrq(&mut session, &socket, &src, filename, mode_name);
                             },
                             Ok(Packet::ERROR(error_code, error_msg)) => {
-                                println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
+                                handle_error(&mut session, &socket, &src, error_code, error_msg);
                             },
                             Ok(Packet::Data(block_no, data)) => {
-                                println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
-                                unimplemented!();
+                                handle_data(&mut session, &socket, &src, block_no, data);
                             },
                             Ok(Packet::WRQ(filename, mode_name)) => {
                                 handle_wrq(&mut session, &socket, &src, filename, mode_name);
@@ -115,7 +118,7 @@ pub fn wip_server(local_addr : &str) {
             let mut deletion : Vec<SocketAddr> = Vec::new();
             for pair in sessions.iter() {
                 let (socket, session) = pair;
-                if now - session.last_activity > Duration::seconds(SESSION_MAX_AGE_SEC) {
+                if session.dead || now - session.last_activity > Duration::seconds(SESSION_MAX_AGE_SEC) {
                     deletion.push(socket.clone());
                 }
             }
@@ -145,7 +148,17 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, fi
 
 fn handle_wrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, filename : String, mode_name : String) {
     println!("WRQ opcode=2, filename={}, mode_name={}", filename, mode_name);
-    unimplemented!();
+
+    match File::create(filename) {
+        Ok(file) => {
+            session.write_stream = Box::new(FileStream::new(file));
+            send_packet(&socket, &src, Packet::ACK(0));
+        },
+        Err(err) => {
+            println!("Error: {}", err);
+            send_packet(&socket, &src, Packet::ERROR(ErrorCode::NotDefined, err.to_string()))
+        }
+    }
 }
 
 fn send_data_block(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16) {
@@ -157,8 +170,8 @@ fn send_data_block(session : &mut Session, socket : &UdpSocket, src : &SocketAdd
     if let Ok(bytes) = session.read_stream.get_block(start, length) {
         if bytes.len() > 0 {
             session.buffer = bytes.clone();
-            session.last_sent_block_no = block_no;
-            send_packet(&socket, &src, Packet::Data(block_no, &bytes));
+            session.last_block_no = block_no;
+            send_packet(&socket, &src, Packet::Data(block_no, Box::new(bytes)));
         }
     }
     else {
@@ -167,14 +180,14 @@ fn send_data_block(session : &mut Session, socket : &UdpSocket, src : &SocketAdd
 }
 
 fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16) {
-    println!("ACK opcode=4, block_no={}, expected={}", block_no, session.last_sent_block_no);
+    println!("ACK opcode=4, block_no={}, expected={}", block_no, session.last_block_no);
 
-    if block_no == session.last_sent_block_no {
+    if block_no == session.last_block_no {
         println!("  Sending next block {}", block_no + 1);
         send_data_block(session, &socket, &src, block_no + 1);
     }
     else {
-        send_packet(socket, src, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_sent_block_no)));
+        send_packet(socket, src, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_block_no)));
     }
 }
 
@@ -193,4 +206,34 @@ fn handle_file_read(filename : String) -> Result<Box<TftpReadStream>, ()> {
             }
         }
     }
+}
+
+fn handle_data(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, block_no : u16, data : Box<Vec<u8>>) {
+    println!("DATA opcode=3, block={}, data={} bytes", block_no, data.len());
+    if block_no == session.last_block_no {
+        // send ack, we'have already sent this
+        println!("  data: already got block: {}", block_no);
+        send_packet(&socket, &src, Packet::ACK(block_no));
+    }
+    else if block_no == session.last_block_no + 1 {
+        // store this
+        println!("  new data block: {}. {} bytes", block_no, data.len());
+        if let Ok(_) = session.write_stream.add_block(data) {
+            session.last_block_no = block_no;
+            send_packet(&socket, &src, Packet::ACK(block_no));
+        }
+        else {
+            println!("  new data block: {}, but I/O error", block_no);
+            send_packet(socket, src, Packet::ERROR(ErrorCode::DiskFullOrAllocationFailed, "I/O error".to_string()));
+        }
+    }
+    else {
+        println!("  new data block: expected block {}, actual {}", session.last_block_no+1, block_no);
+        send_packet(socket, src, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_block_no)));
+    }
+}
+
+fn handle_error(session : &mut Session, _ : &UdpSocket, _ : &SocketAddr, error_code : ErrorCode, error_msg : String) {
+    println!("ERR error_code={}, error_msg={}", error_code as u16, error_msg);
+    session.dead = true;
 }

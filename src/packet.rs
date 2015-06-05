@@ -25,11 +25,11 @@ impl ErrorCode {
     }
 }
 
-pub enum Packet<'a> {
+pub enum Packet {
     RRQ(String, String),
     WRQ(String, String),
     ACK(u16),
     ERROR(ErrorCode, String),
-    Data(u16, &'a Vec<u8>),
+    Data(u16, Box<Vec<u8>>),
 }
 
