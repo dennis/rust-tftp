@@ -141,9 +141,9 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, fi
             session.read_stream = stream;
             send_data_block(session, &socket, &src, 1);
         },
-        Err(_) => {
+        Err(error) => {
             // File not found
-            send_packet(&socket, &src, Packet::ERROR(ErrorCode::FileNotFound, "Test".to_string()))
+            send_packet(&socket, &src, Packet::ERROR(ErrorCode::FileNotFound, error))
         }
     }
 }
@@ -193,7 +193,7 @@ fn handle_ack(session : &mut Session, socket : &UdpSocket, src : &SocketAddr, bl
     }
 }
 
-fn handle_file_read(filename : String) -> Result<Box<TftpReadStream>, ()> {
+fn handle_file_read(filename : String) -> Result<Box<TftpReadStream>, String> {
     if filename == "hello" {
         Ok(Box::new(StringStream::new("world".to_string())))
     }
@@ -204,7 +204,7 @@ fn handle_file_read(filename : String) -> Result<Box<TftpReadStream>, ()> {
             },
             Err(err) => {
                 println!("Error: {}", err);
-                Err(())
+                Err(err.to_string())
             }
         }
     }
