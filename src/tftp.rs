@@ -8,7 +8,9 @@ use packet::{Packet, ErrorCode};
 use protocol::Protocol;
 use stream::{TftpReadStream, TftpWriteStream, NullStream, FileStream, StringStream};
 
-const MAX_PACKET_SIZE : usize = 1024;
+// Largest packet is DATA, which consist of 2 bytes opcode, 2 bytes block_no and up to 512 bytes
+// data.. 
+const MAX_PACKET_SIZE : usize = 2+2+512;
 const SESSION_REAPER_CHECK_SEC : i64 = 10;
 const SESSION_MAX_AGE_SEC : i64 = 300;
 
