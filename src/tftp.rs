@@ -16,24 +16,25 @@ const SESSION_MAX_AGE_SEC : i64 = 300;
 
 // https://www.ietf.org/rfc/rfc1350.txt
 
-struct Session {
+struct Session<'a> {
     last_block_no : u16,
     last_activity : ::time::SteadyTime,
     read_stream : Box<TftpReadStream>,
     write_stream : Box<TftpWriteStream>,
-    peer: SocketAddr,
+    peer_socket: SocketAddr,
+    source_socket: &'a UdpSocket,
     buffer : Vec<u8>,
     dead : bool,
 }
 
 #[allow(unused_must_use)]
-fn send_packet(socket : &UdpSocket, peer : &SocketAddr, packet : Packet) {
+fn send_packet(socket : &UdpSocket, peer_socket : &SocketAddr, packet : Packet) {
     if let Ok(out) = Protocol::encode(packet) {
         println!("Sending {} bytes", out.len());
 
         // if we cannot send it, we just silently ignore it. The session will
         // eventually get expired anyway
-        socket.send_to(&out[..], peer);
+        socket.send_to(&out[..], peer_socket);
     }
     else {
         println!("Cannot encode packet!");
@@ -68,7 +69,8 @@ pub fn wip_server(local_addr : &str) {
                             read_stream: Box::new(NullStream),
                             write_stream: Box::new(NullStream),
                             buffer : Vec::new(),
-                            peer: src,
+                            peer_socket: src,
+                            source_socket: &socket,
                             dead : false,
                         });
                     },
@@ -145,7 +147,7 @@ fn handle_rrq(session : &mut Session, socket : &UdpSocket, filename : String, mo
         },
         Err(error) => {
             // File not found
-            send_packet(&socket, &session.peer, Packet::ERROR(ErrorCode::FileNotFound, error))
+            send_packet(&socket, &session.peer_socket, Packet::ERROR(ErrorCode::FileNotFound, error))
         }
     }
 }
@@ -156,11 +158,11 @@ fn handle_wrq(session : &mut Session, socket : &UdpSocket, filename : String, mo
     match File::create(filename) {
         Ok(file) => {
             session.write_stream = Box::new(FileStream::new(file));
-            send_packet(&socket, &session.peer, Packet::ACK(0));
+            send_packet(&socket, &session.peer_socket, Packet::ACK(0));
         },
         Err(err) => {
             println!("Error: {}", err);
-            send_packet(&socket, &session.peer, Packet::ERROR(ErrorCode::NotDefined, err.to_string()))
+            send_packet(&socket, &session.peer_socket, Packet::ERROR(ErrorCode::NotDefined, err.to_string()))
         }
     }
 }
@@ -174,11 +176,11 @@ fn send_data_block(session : &mut Session, socket : &UdpSocket, block_no : u16) 
             println!("  Send data block: start={}, length={}", start, bytes.len());
             session.buffer = bytes.clone();
             session.last_block_no = block_no;
-            send_packet(&socket, &session.peer, Packet::Data(block_no, Box::new(bytes)));
+            send_packet(&socket, &session.peer_socket, Packet::Data(block_no, Box::new(bytes)));
         }
     }
     else {
-        send_packet(&socket, &session.peer, Packet::ERROR(ErrorCode::NotDefined, "I/O error eading block".to_string()))
+        send_packet(&socket, &session.peer_socket, Packet::ERROR(ErrorCode::NotDefined, "I/O error eading block".to_string()))
     }
 }
 
@@ -190,7 +192,7 @@ fn handle_ack(session : &mut Session, socket : &UdpSocket, block_no : u16) {
         send_data_block(session, &socket, block_no + 1);
     }
     else {
-        send_packet(socket, &session.peer, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_block_no)));
+        send_packet(socket, &session.peer_socket, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_block_no)));
     }
 }
 
@@ -216,23 +218,23 @@ fn handle_data(session : &mut Session, socket : &UdpSocket, block_no : u16, data
     if block_no == session.last_block_no {
         // send ack, we'have already sent this
         println!("  data: already got block: {}", block_no);
-        send_packet(&socket, &session.peer, Packet::ACK(block_no));
+        send_packet(&socket, &session.peer_socket, Packet::ACK(block_no));
     }
     else if block_no == session.last_block_no + 1 {
         // store this
         println!("  new data block: {}. {} bytes", block_no, data.len());
         if let Ok(_) = session.write_stream.add_block(data) {
             session.last_block_no = block_no;
-            send_packet(&socket, &session.peer, Packet::ACK(block_no));
+            send_packet(&socket, &session.peer_socket, Packet::ACK(block_no));
         }
         else {
             println!("  new data block: {}, but I/O error", block_no);
-            send_packet(socket, &session.peer, Packet::ERROR(ErrorCode::DiskFullOrAllocationFailed, "I/O error".to_string()));
+            send_packet(socket, &session.peer_socket, Packet::ERROR(ErrorCode::DiskFullOrAllocationFailed, "I/O error".to_string()));
         }
     }
     else {
         println!("  new data block: expected block {}, actual {}", session.last_block_no+1, block_no);
-        send_packet(socket, &session.peer, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_block_no)));
+        send_packet(socket, &session.peer_socket, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, session.last_block_no)));
     }
 }
 
