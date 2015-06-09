@@ -27,17 +27,19 @@ struct Peer<'a> {
     dead : bool,
 }
 
-#[allow(unused_must_use)]
-fn send_packet(socket : &UdpSocket, peer_socket : &SocketAddr, packet : Packet) {
-    if let Ok(out) = Protocol::encode(packet) {
-        println!("Sending {} bytes", out.len());
+impl<'a> Peer<'a> {
+    #[allow(unused_must_use)]
+    fn send_packet(&self, packet : Packet) {
+        if let Ok(out) = Protocol::encode(packet) {
+            println!("Sending {} bytes", out.len());
 
-        // if we cannot send it, we just silently ignore it. The peer will
-        // eventually get expired anyway
-        socket.send_to(&out[..], peer_socket);
-    }
-    else {
-        println!("Cannot encode packet!");
+            // if we cannot send it, we just silently ignore it. The peer will
+            // eventually get expired anyway
+            self.source_socket.send_to(&out[..], self.peer_socket);
+        }
+        else {
+            println!("Cannot encode packet!");
+        }
     }
 }
 
@@ -84,7 +86,7 @@ pub fn wip_server(local_addr : &str) {
                     Vacant(_) => {
                         // We have just added it, so this shouldn't be possible
                         // No peer found
-                        send_packet(&socket, &src, Packet::ERROR(ErrorCode::UnknownTransferId, "".to_string()));
+                        println!("Peer not found");
                     },
                     Occupied(entry) => {
                         let mut peer = entry.into_mut();
@@ -147,7 +149,7 @@ fn handle_rrq(peer : &mut Peer, filename : String, mode_name : String) {
         },
         Err(error) => {
             // File not found
-            send_packet(&peer.source_socket, &peer.peer_socket, Packet::ERROR(ErrorCode::FileNotFound, error))
+            peer.send_packet(Packet::ERROR(ErrorCode::FileNotFound, error))
         }
     }
 }
@@ -158,11 +160,11 @@ fn handle_wrq(peer : &mut Peer, filename : String, mode_name : String) {
     match File::create(filename) {
         Ok(file) => {
             peer.write_stream = Box::new(FileStream::new(file));
-            send_packet(peer.source_socket, &peer.peer_socket, Packet::ACK(0));
+            peer.send_packet(Packet::ACK(0));
         },
         Err(err) => {
             println!("Error: {}", err);
-            send_packet(peer.source_socket, &peer.peer_socket, Packet::ERROR(ErrorCode::NotDefined, err.to_string()))
+            peer.send_packet(Packet::ERROR(ErrorCode::NotDefined, err.to_string()))
         }
     }
 }
@@ -176,11 +178,11 @@ fn send_data_block(peer : &mut Peer, block_no : u16) {
             println!("  Send data block: start={}, length={}", start, bytes.len());
             peer.buffer = bytes.clone();
             peer.last_block_no = block_no;
-            send_packet(peer.source_socket, &peer.peer_socket, Packet::Data(block_no, Box::new(bytes)));
+            peer.send_packet(Packet::Data(block_no, Box::new(bytes)));
         }
     }
     else {
-        send_packet(peer.source_socket, &peer.peer_socket, Packet::ERROR(ErrorCode::NotDefined, "I/O error eading block".to_string()))
+        peer.send_packet(Packet::ERROR(ErrorCode::NotDefined, "I/O error eading block".to_string()))
     }
 }
 
@@ -192,7 +194,7 @@ fn handle_ack(peer : &mut Peer, block_no : u16) {
         send_data_block(peer, block_no + 1);
     }
     else {
-        send_packet(peer.source_socket, &peer.peer_socket, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, peer.last_block_no)));
+        peer.send_packet(Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, peer.last_block_no)));
     }
 }
 
@@ -218,23 +220,23 @@ fn handle_data(peer : &mut Peer, block_no : u16, data : Box<Vec<u8>>) {
     if block_no == peer.last_block_no {
         // send ack, we'have already sent this
         println!("  data: already got block: {}", block_no);
-        send_packet(&peer.source_socket, &peer.peer_socket, Packet::ACK(block_no));
+        peer.send_packet(Packet::ACK(block_no));
     }
     else if block_no == peer.last_block_no + 1 {
         // store this
         println!("  new data block: {}. {} bytes", block_no, data.len());
         if let Ok(_) = peer.write_stream.add_block(data) {
             peer.last_block_no = block_no;
-            send_packet(&peer.source_socket, &peer.peer_socket, Packet::ACK(block_no));
+            peer.send_packet(Packet::ACK(block_no));
         }
         else {
             println!("  new data block: {}, but I/O error", block_no);
-            send_packet(peer.source_socket, &peer.peer_socket, Packet::ERROR(ErrorCode::DiskFullOrAllocationFailed, "I/O error".to_string()));
+            peer.send_packet(Packet::ERROR(ErrorCode::DiskFullOrAllocationFailed, "I/O error".to_string()));
         }
     }
     else {
         println!("  new data block: expected block {}, actual {}", peer.last_block_no+1, block_no);
-        send_packet(peer.source_socket, &peer.peer_socket, Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, peer.last_block_no)));
+        peer.send_packet(Packet::ERROR(ErrorCode::UnknownTransferId, format!("expected={}, got={}", block_no, peer.last_block_no)));
     }
 }
 
